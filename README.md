@@ -270,94 +270,15 @@
     }
 
     async function submitWeight() {
-      const athlete = document.getElementById("athlete").value;
-      const weight = document.getElementById("weight").value;
-      const status = document.getElementById("status");
-      const submitBtn = document.getElementById("submitBtn");
+      const athlete = athleteSelect.value;
+      const weight = Number(weightInput.value);
+
+      clearStatus();
 
       if (!athlete) {
         showStatus("Please select your name.", "error");
         return;
       }
-
-      if (!weight) {
-        showStatus("Please enter your weight.", "error");
-        return;
-      }
-
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Submitting...";
-      showStatus("", "");
-
-      try {
-        const result = await jsonpRequest(
-          `${SCRIPT_URL}?action=submit&athlete=${encodeURIComponent(athlete)}&weight=${encodeURIComponent(weight)}`
-        );
-
-        if (result.success) {
-          showStatus(
-            `✓ ${Number(result.weight).toFixed(1)} lb recorded for ${result.athlete}`,
-            "success"
-          );
-          document.getElementById("athlete").value = "";
-          document.getElementById("weight").value = "";
-          return;
-        }
-
-        if (result.duplicate) {
-          const existing = Number(result.existingWeight).toFixed(1);
-          const proposed = Number(weight).toFixed(1);
-
-          const shouldReplace = window.confirm(
-            `${result.athlete} already submitted ${existing} lb today.
-
-` +
-            `Replace it with ${proposed} lb?`
-          );
-
-          if (!shouldReplace) {
-            showStatus(
-              `Existing weight kept: ${existing} lb.`,
-              "error"
-            );
-            return;
-          }
-
-          submitBtn.textContent = "Updating...";
-
-          const replacement = await jsonpRequest(
-            `${SCRIPT_URL}?action=submit&athlete=${encodeURIComponent(athlete)}&weight=${encodeURIComponent(weight)}&replace=true`
-          );
-
-          if (replacement.success) {
-            showStatus(
-              `✓ Weight corrected to ${Number(replacement.weight).toFixed(1)} lb for ${replacement.athlete}`,
-              "success"
-            );
-            document.getElementById("athlete").value = "";
-            document.getElementById("weight").value = "";
-          } else {
-            showStatus(
-              replacement.error || "Unable to update weight.",
-              "error"
-            );
-          }
-
-          return;
-        }
-
-        showStatus(result.error || "Unable to submit weight.", "error");
-
-      } catch (error) {
-        showStatus(
-          "Unable to connect to the weigh-in database. Please try again.",
-          "error"
-        );
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Submit Weight";
-      }
-    }
 
       if (!weight || weight < 100 || weight > 400) {
         showStatus("Please enter a valid weight.", "error");
@@ -374,22 +295,67 @@
           weight: weight.toFixed(1)
         });
 
-        if (!result.success) {
-          throw new Error(result.error || "Weight could not be saved.");
+        if (result.success) {
+          showStatus(
+            `✓ ${Number(result.weight).toFixed(1)} lb recorded for ${result.athlete}`,
+            "success"
+          );
+
+          athleteSelect.value = "";
+          weightInput.value = "";
+          athleteSelect.focus();
+          return;
         }
 
-        showStatus(
-          `✓ ${Number(result.weight).toFixed(1)} lb recorded for ${result.athlete}`,
-          "success"
-        );
+        if (result.duplicate) {
+          const existing = Number(result.existingWeight).toFixed(1);
+          const proposed = weight.toFixed(1);
 
-        athleteSelect.value = "";
-        weightInput.value = "";
-        athleteSelect.focus();
+          const shouldReplace = window.confirm(
+            `${result.athlete} already submitted ${existing} lb today.\n\n` +
+            `Replace it with ${proposed} lb?`
+          );
+
+          if (!shouldReplace) {
+            showStatus(`Existing weight kept: ${existing} lb.`, "error");
+            return;
+          }
+
+          submitBtn.textContent = "Updating...";
+
+          const replacement = await jsonpRequest({
+            action: "submit",
+            athlete: athlete,
+            weight: proposed,
+            replace: "true"
+          });
+
+          if (!replacement.success) {
+            throw new Error(
+              replacement.error || "Unable to update weight."
+            );
+          }
+
+          showStatus(
+            `✓ Weight corrected to ${Number(replacement.weight).toFixed(1)} lb for ${replacement.athlete}`,
+            "success"
+          );
+
+          athleteSelect.value = "";
+          weightInput.value = "";
+          athleteSelect.focus();
+          return;
+        }
+
+        throw new Error(result.error || "Weight could not be saved.");
 
       } catch (error) {
-        showStatus(error.message || "Weight was not saved. Please try again.", "error");
+        showStatus(
+          error.message || "Weight was not saved. Please try again.",
+          "error"
+        );
         console.error(error);
+
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = "Submit Weight";
