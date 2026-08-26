@@ -187,6 +187,60 @@
 
   <script>
     const API_URL = "https://script.google.com/macros/s/AKfycbxWdWBWO_YiZZsvKrHQIP40k_is1kDIGaBL38-SbVhgRgcfPObTYW01rNnpJlOwlsVU9A/exec";
+    const ROSTER_CACHE_KEY = "ucfDailyWeighInRosterV1";
+    const ROSTER_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+    // This backup list makes the dropdown available immediately, even during
+    // an Apps Script cold start. A successful live request replaces it.
+    const FALLBACK_ROSTER = [
+      "Alan Soler",
+      "Alejandro Ludeiro",
+      "Andrew Lepine",
+      "Anthony Lariz",
+      "Austin Jacobs",
+      "Ayden Gonzalez",
+      "Brady Montrowl",
+      "Cade Brown",
+      "Cal Moreau",
+      "Chase Williams",
+      "Collin Priest",
+      "Cooper Clapp",
+      "Dallas Brooks",
+      "Dillon Knight",
+      "Dominic Woodward",
+      "Drew Bellis",
+      "Emmanuel Lantigua",
+      "Ethan Puig",
+      "Evan Jones",
+      "Frankie Russo",
+      "Jackson Miller",
+      "Jake Gorelick",
+      "James Hankerson, Jr",
+      "Joey Trombley",
+      "Joseph Raimonda",
+      "Kaniel Rosado",
+      "Lochlan Radloff",
+      "Luke Mottola",
+      "Mateo Gray",
+      "Matias Fischer",
+      "Matthew Heyl",
+      "Matthew Logan",
+      "Matthew Sauser",
+      "Maximillian Murray, Jr",
+      "Michael Gillen",
+      "Riley Leatherman",
+      "Ryan Taffe",
+      "Rylan Baker",
+      "Sachem Ramos",
+      "Sebastian Hurtado",
+      "Shamaar McDuffie",
+      "Stephen Chucka",
+      "Talan Bell",
+      "Wyatt Dion",
+      "Yavier Rosendo",
+      "Zachary Beyra",
+      "Zachary Malvasio"
+    ];
     const athleteSelect = document.getElementById("athlete");
     const weightInput = document.getElementById("weight");
     const submitBtn = document.getElementById("submitBtn");
@@ -202,7 +256,7 @@
       statusBox.className = "status";
     }
 
-    function jsonpRequest(params) {
+    function jsonpRequest(params, timeoutMs = 30000) {
       return new Promise((resolve, reject) => {
         const callbackName =
           "weightTrackerCallback_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
@@ -216,7 +270,7 @@
         const timeout = setTimeout(() => {
           cleanup();
           reject(new Error("Request timed out."));
-        }, 12000);
+        }, timeoutMs);
 
         function cleanup() {
           clearTimeout(timeout);
@@ -234,38 +288,132 @@
           reject(new Error("Could not reach the weigh-in database."));
         };
 
+        // The timestamp prevents a phone or intermediary cache from reusing an
+        // expired JSONP response with an old callback name.
+        query.set("_", Date.now().toString());
         script.src = API_URL + "?" + query.toString();
         document.body.appendChild(script);
       });
+    }
+
+    function isValidRoster(athletes) {
+      return (
+        Array.isArray(athletes) &&
+        athletes.length > 0 &&
+        athletes.every(name => typeof name === "string" && name.trim())
+      );
+    }
+
+    function renderRoster(athletes) {
+      const currentSelection = athleteSelect.value;
+      const uniqueAthletes = [...new Set(athletes)]
+        .map(name => name.trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+
+      athleteSelect.innerHTML = '<option value="">Select your name</option>';
+
+      uniqueAthletes.forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        athleteSelect.appendChild(option);
+      });
+
+      if (uniqueAthletes.includes(currentSelection)) {
+        athleteSelect.value = currentSelection;
+      }
+
+      athleteSelect.disabled = false;
+      submitBtn.disabled = false;
+    }
+
+    function getSavedRoster() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(ROSTER_CACHE_KEY));
+
+        if (
+          saved &&
+          isValidRoster(saved.athletes) &&
+          Date.now() - Number(saved.savedAt) < ROSTER_CACHE_MAX_AGE
+        ) {
+          return saved.athletes;
+        }
+      } catch (error) {
+        console.warn("Saved roster could not be read.", error);
+      }
+
+      return null;
+    }
+
+    function saveRoster(athletes) {
+      try {
+        localStorage.setItem(
+          ROSTER_CACHE_KEY,
+          JSON.stringify({
+            savedAt: Date.now(),
+            athletes: athletes
+          })
+        );
+      } catch (error) {
+        console.warn("Roster could not be saved on this device.", error);
+      }
+    }
+
+    function wait(milliseconds) {
+      return new Promise(resolve => setTimeout(resolve, milliseconds));
+    }
+
+    async function requestLiveRoster() {
+      let lastError;
+
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          return await jsonpRequest({ action: "roster" }, 30000);
+        } catch (error) {
+          lastError = error;
+
+          if (attempt === 1) {
+            await wait(750);
+          }
+        }
+      }
+
+      throw lastError || new Error("Roster could not be loaded.");
     }
 
     async function loadRoster() {
       athleteSelect.disabled = true;
       submitBtn.disabled = true;
 
-      try {
-        const data = await jsonpRequest({ action: "roster" });
+      // Render a usable list before waiting for the network.
+      const savedRoster = getSavedRoster();
+      const initialRoster = savedRoster || FALLBACK_ROSTER;
 
-        if (!data.success || !Array.isArray(data.athletes)) {
+      if (isValidRoster(initialRoster)) {
+        renderRoster(initialRoster);
+      }
+
+      try {
+        const data = await requestLiveRoster();
+
+        if (!data.success || !isValidRoster(data.athletes)) {
           throw new Error(data.error || "Roster could not be loaded.");
         }
 
-        athleteSelect.innerHTML = '<option value="">Select your name</option>';
-
-        data.athletes.forEach(name => {
-          const option = document.createElement("option");
-          option.value = name;
-          option.textContent = name;
-          athleteSelect.appendChild(option);
-        });
-
-        athleteSelect.disabled = false;
-        submitBtn.disabled = false;
+        renderRoster(data.athletes);
+        saveRoster(data.athletes);
 
       } catch (error) {
-        athleteSelect.innerHTML = '<option value="">Roster unavailable</option>';
-        showStatus("Unable to load the roster. Please tell staff.", "error");
-        console.error(error);
+        if (isValidRoster(initialRoster)) {
+          // The saved/backup roster remains fully usable. Keep the technical
+          // failure out of the athlete-facing workflow.
+          console.warn("Live roster refresh failed; using backup roster.", error);
+        } else {
+          athleteSelect.innerHTML = '<option value="">Roster unavailable</option>';
+          showStatus("Unable to load the roster. Please refresh and try again.", "error");
+          console.error(error);
+        }
       }
     }
 
