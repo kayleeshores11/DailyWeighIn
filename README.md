@@ -381,14 +381,14 @@
       let completedChecks = 0;
       let lastError = null;
 
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        await wait(attempt === 1 ? 1000 : 2000);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        await wait(attempt === 1 ? 600 : 1200);
 
         try {
           const result = await jsonpRequest({
             action: "verify",
             submissionId: submissionId
-          }, 12000);
+          }, 6000);
 
           if (result.success && result.found) {
             return result;
@@ -416,7 +416,7 @@
         return await jsonpRequest({
           ...params,
           submissionId: submissionId
-        }, 30000);
+        }, 7000);
       } catch (submissionError) {
         showStatus("Verifying submission...", "");
         submitBtn.textContent = "Verifying...";
