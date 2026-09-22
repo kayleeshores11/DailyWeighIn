@@ -377,70 +377,70 @@
       );
     }
 
-    async function verifyTimedOutSubmission(submissionId) {
-      let completedChecks = 0;
-      let lastError = null;
+    function confirmedDuplicateResult(result, requestedWeight, submissionId) {
+      const existingWeight = Number(result.existingWeight);
+      const expectedWeight = Number(requestedWeight);
 
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        await wait(attempt === 1 ? 600 : 1200);
-
-        try {
-          const result = await jsonpRequest({
-            action: "verify",
-            submissionId: submissionId
-          }, 6000);
-
-          if (result.success && result.found) {
-            return result;
-          }
-
-          if (result.success) {
-            completedChecks++;
-          } else {
-            lastError = new Error(result.error || "Verification failed.");
-          }
-        } catch (error) {
-          lastError = error;
-        }
-      }
-
-      if (completedChecks > 0) {
+      if (
+        !result.duplicate ||
+        !Number.isFinite(existingWeight) ||
+        existingWeight.toFixed(1) !== expectedWeight.toFixed(1)
+      ) {
         return null;
       }
 
-      throw lastError || new Error("The submission could not be verified.");
+      return {
+        success: true,
+        found: true,
+        verified: true,
+        corrected: false,
+        athlete: result.athlete,
+        weight: existingWeight,
+        submissionId: submissionId,
+        message: "Weight submission confirmed."
+      };
     }
 
-    async function submitWithVerification(params, submissionId) {
+    async function submitWithRetry(params, submissionId) {
       try {
         return await jsonpRequest({
           ...params,
           submissionId: submissionId
         }, 7000);
       } catch (submissionError) {
-        showStatus("Verifying submission...", "");
-        submitBtn.textContent = "Verifying...";
+        showStatus("Confirming submission...", "");
+        submitBtn.textContent = "Confirming...";
+
+        // Resend the exact same request with the same ID. The updated backend
+        // treats this as the same submission, so it cannot create a second row.
+        // This also works during deployment against the older backend: if the
+        // first request saved the same weight, its duplicate response confirms it.
+        await wait(600);
 
         try {
-          const verified = await verifyTimedOutSubmission(submissionId);
+          const retryResult = await jsonpRequest({
+            ...params,
+            submissionId: submissionId
+          }, 10000);
 
-          if (verified) {
-            return verified;
+          if (retryResult.success) {
+            return retryResult;
           }
 
-          throw new Error(
-            "The weight was not found after verification. Please submit it again."
+          const confirmedDuplicate = confirmedDuplicateResult(
+            retryResult,
+            params.weight,
+            submissionId
           );
-        } catch (verificationError) {
-          if (
-            verificationError.message &&
-            verificationError.message.includes("not found after verification")
-          ) {
-            throw verificationError;
+
+          if (confirmedDuplicate) {
+            return confirmedDuplicate;
           }
 
+          return retryResult;
+        } catch (retryError) {
           throw new Error(
-            "We could not confirm whether the weight was saved. Please wait a moment and check with staff before submitting again."
+            "The weigh-in service is not responding. Please wait a moment and try once more."
           );
         }
       }
@@ -520,7 +520,7 @@
       submitBtn.textContent = "Submitting...";
 
       try {
-        const result = await submitWithVerification({
+        const result = await submitWithRetry({
           action: "submit",
           athlete: athlete,
           weight: weight.toFixed(1)
@@ -554,7 +554,7 @@
 
           submitBtn.textContent = "Updating...";
 
-          const replacement = await submitWithVerification({
+          const replacement = await submitWithRetry({
             action: "submit",
             athlete: athlete,
             weight: proposed,
